@@ -1,8 +1,11 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
+
 	_ "github.com/snowflakedb/gosnowflake"
 )
 
@@ -56,10 +59,11 @@ type LTAPUnifiedRecord struct {
 }
 
 // StreamPickingData fetches picking data joined with route mapping in one go
-func (c *SnowflakeClient) StreamPickingData(date string, recordChan chan<- LTAPUnifiedRecord, errChan chan<- error) {
+func (c *SnowflakeClient) StreamPickingData(ctx context.Context, date string, recordChan chan<- LTAPUnifiedRecord, errChan chan<- error) {
 	defer close(recordChan)
 
-	// Single query with LEFT JOINs to avoid client-side iteration
+	// Single query with LEFT JOINs
+	// Added DISTINCT to ZORF to prevent Cartesian duplication (one delivery can have many HUs)
 	query := `
 		WITH LTAP AS (
 			SELECT VLPLA, QDATU, NISTA, QNAME, KOBER, QZEIT, NLPLA, VBELN, VLTYP, LGNUM, BRGEW, LGORT, VOLUM
@@ -69,12 +73,19 @@ func (c *SnowflakeClient) StreamPickingData(date string, recordChan chan<- LTAPU
 			  AND VBELN IS NOT NULL
 			  AND LGORT = '4000'
 		),
-		ZORF AS (
+		ZORF_CTE AS (
 			SELECT VBELN, CAST(ROUTE AS VARCHAR) as ROUTE, CAST(LPRIO AS VARCHAR) as LPRIO 
 			FROM PROD_CDH_DB.SDS_MAIN.SDS_CP_ZORF_HU_TO_LINK
+			WHERE VBELN IN (SELECT VBELN FROM LTAP)
 			UNION
 			SELECT VBELN, CAST(ROUTE AS VARCHAR) as ROUTE, CAST(LPRIO AS VARCHAR) as LPRIO 
 			FROM PROD_CDH_DB.SDS_MAIN.SDS_CP_ZORF_HUTO_LNKHIS
+			WHERE VBELN IN (SELECT VBELN FROM LTAP)
+		),
+		ZORF AS (
+			SELECT VBELN, ROUTE, LPRIO
+			FROM ZORF_CTE
+			QUALIFY ROW_NUMBER() OVER (PARTITION BY VBELN ORDER BY LPRIO DESC) = 1
 		)
 		SELECT 
 			L.*, 
@@ -83,25 +94,43 @@ func (c *SnowflakeClient) StreamPickingData(date string, recordChan chan<- LTAPU
 		FROM LTAP L
 		LEFT JOIN ZORF Z ON L.VBELN = Z.VBELN
 	`
-	rows, err := c.db.Query(query, date)
+	slog.Info("querying snowflake for picking data...", "date", date)
+	rows, err := c.db.QueryContext(ctx, query, date)
 	if err != nil {
 		errChan <- fmt.Errorf("failed to start picking stream: %w", err)
 		return
 	}
 	defer rows.Close()
 
+	if ctx.Err() != nil {
+		errChan <- ctx.Err()
+		return
+	}
+
+	slog.Info("snowflake picking stream started", "date", date)
+
 	for rows.Next() {
-		var r LTAPUnifiedRecord
-		err := rows.Scan(
-			&r.VLPLA, &r.QDATU, &r.NISTA, &r.QNAME, &r.KOBER, &r.QZEIT, &r.NLPLA,
-			&r.VBELN, &r.VLTYP, &r.LGNUM, &r.BRGEW, &r.LGORT, &r.VOLUM,
-			&r.ROUTE, &r.LPRIO,
-		)
-		if err != nil {
-			errChan <- fmt.Errorf("error scanning picking row: %w", err)
+		select {
+		case <-ctx.Done():
+			errChan <- ctx.Err()
 			return
+		default:
+			var r LTAPUnifiedRecord
+			err := rows.Scan(
+				&r.VLPLA, &r.QDATU, &r.NISTA, &r.QNAME, &r.KOBER, &r.QZEIT, &r.NLPLA,
+				&r.VBELN, &r.VLTYP, &r.LGNUM, &r.BRGEW, &r.LGORT, &r.VOLUM,
+				&r.ROUTE, &r.LPRIO,
+			)
+			if err != nil {
+				errChan <- fmt.Errorf("error scanning picking row: %w", err)
+				return
+			}
+			recordChan <- r
 		}
-		recordChan <- r
+	}
+
+	if err := rows.Err(); err != nil {
+		errChan <- fmt.Errorf("picking stream iteration error: %w", err)
 	}
 }
 
@@ -111,11 +140,11 @@ type CDHDRUnifiedRecord struct {
 	EXIDV                         string
 	BRGEW, ZLAENG, ZBREIT, ZHOEHE float64
 	VBELN, ROUTE, LPRIO, LGNUM    string
-	ZNEST                         string
+	ZNEST, VLTYP                  string
 }
 
 // StreamPackingData streams packing headers joined with VEKP and ZORF in one go
-func (c *SnowflakeClient) StreamPackingData(date string, recordChan chan<- CDHDRUnifiedRecord, errChan chan<- error) {
+func (c *SnowflakeClient) StreamPackingData(ctx context.Context, date string, recordChan chan<- CDHDRUnifiedRecord, errChan chan<- error) {
 	defer close(recordChan)
 
 	query := `
@@ -129,13 +158,16 @@ func (c *SnowflakeClient) StreamPackingData(date string, recordChan chan<- CDHDR
 		VEKP AS (
 			SELECT VENUM, EXIDV, BRGEW, ZLAENG, ZBREIT, ZHOEHE 
 			FROM PROD_CDH_DB.SDS_MAIN.SDS_CP_VEKP
+			WHERE VENUM IN (SELECT OBJECTID FROM HEADERS)
 		),
 		LINKS AS (
-			SELECT EXIDV, VBELN, CAST(ROUTE AS VARCHAR) as ROUTE, CAST(LPRIO AS VARCHAR) as LPRIO, LGNUM, ZNEST 
+			SELECT EXIDV, VBELN, CAST(ROUTE AS VARCHAR) as ROUTE, CAST(LPRIO AS VARCHAR) as LPRIO, LGNUM, ZNEST, VLTYP 
 			FROM PROD_CDH_DB.SDS_MAIN.SDS_CP_ZORF_HU_TO_LINK
+			WHERE EXIDV IN (SELECT EXIDV FROM VEKP)
 			UNION
-			SELECT EXIDV, VBELN, CAST(ROUTE AS VARCHAR) as ROUTE, CAST(LPRIO AS VARCHAR) as LPRIO, LGNUM, ZNEST 
+			SELECT EXIDV, VBELN, CAST(ROUTE AS VARCHAR) as ROUTE, CAST(LPRIO AS VARCHAR) as LPRIO, LGNUM, ZNEST, VLTYP 
 			FROM PROD_CDH_DB.SDS_MAIN.SDS_CP_ZORF_HUTO_LNKHIS
+			WHERE EXIDV IN (SELECT EXIDV FROM VEKP)
 		)
 		SELECT 
 			H.OBJECTCLAS, H.OBJECTID, H.USERNAME, H.UDATE, H.UTIME, H.TCODE,
@@ -144,36 +176,45 @@ func (c *SnowflakeClient) StreamPackingData(date string, recordChan chan<- CDHDR
 			COALESCE(L.ROUTE, 'NOT-FOUND') as ROUTE, 
 			COALESCE(L.LPRIO, 'NOT-FOUND') as LPRIO, 
 			COALESCE(L.LGNUM, 'NOT-FOUND') as LGNUM, 
-			COALESCE(L.ZNEST, 'NOT-FOUND') as ZNEST
+			COALESCE(L.ZNEST, 'NOT-FOUND') as ZNEST,
+			COALESCE(L.VLTYP, 'NOT-FOUND') as VLTYP
 		FROM HEADERS H
 		JOIN VEKP V ON H.OBJECTID = V.VENUM
 		LEFT JOIN LINKS L ON V.EXIDV = L.EXIDV
 		WHERE L.LGNUM IN ('245', '266')
 	`
-	rows, err := c.db.Query(query, date)
+	rows, err := c.db.QueryContext(ctx, query, date)
 	if err != nil {
 		errChan <- fmt.Errorf("failed to start packing stream: %w", err)
 		return
 	}
 	defer rows.Close()
 
-	for rows.Next() {
-		var r CDHDRUnifiedRecord
-		var brf, zlf, zbf, zhf sql.NullFloat64
-		var vb, rt, lp, lg, zn sql.NullString
+	slog.Info("snowflake packing stream started", "date", date)
 
-		err := rows.Scan(
-			&r.OBJECTCLAS, &r.OBJECTID, &r.USERNAME, &r.UDATE, &r.UTIME, &r.TCODE,
-			&r.EXIDV, &brf, &zlf, &zbf, &zhf,
-			&vb, &rt, &lp, &lg, &zn,
-		)
-		if err != nil {
-			errChan <- fmt.Errorf("error scanning packing row: %w", err)
+	for rows.Next() {
+		select {
+		case <-ctx.Done():
+			errChan <- ctx.Err()
 			return
+		default:
+			var r CDHDRUnifiedRecord
+			var brf, zlf, zbf, zhf sql.NullFloat64
+			var vb, rt, lp, lg, zn, vt sql.NullString
+
+			err := rows.Scan(
+				&r.OBJECTCLAS, &r.OBJECTID, &r.USERNAME, &r.UDATE, &r.UTIME, &r.TCODE,
+				&r.EXIDV, &brf, &zlf, &zbf, &zhf,
+				&vb, &rt, &lp, &lg, &zn, &vt,
+			)
+			if err != nil {
+				errChan <- fmt.Errorf("error scanning packing row: %w", err)
+				return
+			}
+			r.BRGEW, r.ZLAENG, r.ZBREIT, r.ZHOEHE = brf.Float64, zlf.Float64, zbf.Float64, zhf.Float64
+			r.VBELN, r.ROUTE, r.LPRIO, r.LGNUM, r.ZNEST, r.VLTYP = vb.String, rt.String, lp.String, lg.String, zn.String, vt.String
+			recordChan <- r
 		}
-		r.BRGEW, r.ZLAENG, r.ZBREIT, r.ZHOEHE = brf.Float64, zlf.Float64, zbf.Float64, zhf.Float64
-		r.VBELN, r.ROUTE, r.LPRIO, r.LGNUM, r.ZNEST = vb.String, rt.String, lp.String, lg.String, zn.String
-		recordChan <- r
 	}
 }
 

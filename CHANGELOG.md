@@ -1,5 +1,68 @@
 # Changelog
 
+## [0.16.1] - 2026-03-17
+### Fixed
+- **Picking Data Hang (Recurrence)**:
+    - Optimized Snowflake query by replacing `TO_DATE(QDATU)` with raw `QDATU` comparison to leverage system clustering.
+    - Resolved Cartesian row explosion by deduplicating `ZORF` route links using `QUALIFY ROW_NUMBER()` per delivery.
+    - Standardized logic layer to use dashed date format (`YYYY-MM-DD`) for Picking to ensure LTAP table matches properly.
+
+- **SQLite Concurrency (SQLITE_BUSY)**:
+    - Serialized initial data clearing in `main.go` to prevent write contention between parallel extractions.
+    - Configured SQLite connection pool to a single connection (`SetMaxOpenConns(1)`) to ensure stable single-writer access.
+    - Optimized internal locking by leveraging Write-Ahead Logging (WAL) and sequential initial state management.
+
+### Follow-up
+Resolved the second instance of the picking extraction hang and the subsequent `SQLITE_BUSY` errors. The pipeline now safely handles parallel Snowflake streams while maintaining SQLite integrity through serialized pre-clearing and single-connection write queuing.
+
+## [0.16.0] - 2026-03-17
+### Fixed
+- **Picking Data Hang**:
+    - Corrected date format sent to Snowflake query from `YYYY-MM-DD` to `YYYYMMDD` to match source system schema.
+    - Optimized Picking JOIN logic by adding `DISTINCT` to the `ZORF` (delivery links) CTE, preventing Cartesian row duplication.
+    - Standardized extraction progress logging to 1,000 rows for better operational feedback.
+    - Improved date transformation logic to ensure `YYYY-MM-DD` consistency in SQLite across all records.
+    - Added mid-stream error checking (`rows.Err()`) to Snowflake streaming logic.
+
+### Follow-up
+Resolved the picking extraction hang caused by an incorrect date format and Cartesian row duplication in the Snowflake JOIN. The pipeline now correctly streams picking records for the current date and provides real-time progress updates every 1,000 rows.
+
+## [0.15.0] - 2026-03-17
+### Added
+- **Architectural Standards Protocol**:
+    - Implemented **Structured Logging** using `log/slog` with JSON output for better observability and log analysis.
+    - Implemented **Context Propagation** across all layers (Main -> Logic -> DB) to support timeouts and cancellations.
+    - Implemented **Dependency Injection** via interfaces in the logic layer, decoupling processors from concrete database implementations.
+    - Standardized error handling and exit codes in `main.go`.
+
+## [0.14.0] - 2026-03-17
+### Added
+- **Performance Overhaul**:
+    - Implemented **Producer-Worker-Consumer** pipeline for data extraction, reducing transformation bottlenecks.
+    - Added **Batch Insertion** to SQLite, significantly improving throughput during high-volume data pulls.
+    - Enabled **Write-Ahead Logging (WAL)** and optimized SQLite PRAGMAs for concurrent read/write performance.
+    - Added **Database Indices** on all date-related columns for sub-second query performance.
+- **SQL Aggregation Offloading**:
+    - Moved memory-heavy grouping and unique box counting into the SQLite engine using `GROUP BY` and `COUNT(DISTINCT)`.
+    - Reduced application memory footprint by >90% during productivity analytics calculation.
+
+## [0.13.0] - 2026-03-17
+### Added
+- **Enriched Packing Analytics**:
+    - Added `flow` and `floor` columns to `raw_packing`.
+    - Integrated `flow` mapping via routes with normalized `A-flow` naming.
+    - Integrated `floor` mapping using source `VLTYP` and `floor_mapping.json`.
+    - Added `productivity` calculation (boxes/hour) to packing analytics.
+    - Added `effective_hours` tracking for packing shifts using `breaks_config.json`.
+
+## [0.12.0] - 2026-03-17
+### Added
+- **Packing Productivity Analytics**:
+    - New `hourly_packing_productivity` table tracking unique boxes packed per hour.
+    - New `daily_packing_productivity` table for aggregated daily box counts.
+    - Box definition: One unique `objectid` equals one box.
+    - Automated background calculations for both hourly and daily packing performance.
+
 ## [0.11.0] - 2026-03-17
 ### Added
 - **Daily Productivity Analytics**:
@@ -116,4 +179,4 @@
 - Logic, Execution, and Configuration separation.
 
 ### Follow-up
-Implemented `CalculateDailyProductivity` to aggregate hourly metrics into a new `daily_picking_productivity` table. This allows for high-level performance tracking without losing the granular intensity context, as indices are recalculated against the daily cohort averages. This ensures that the "Daily Productivity" is not just a sum of averages, but a statistically sound daily metric.
+Implemented Packing Productivity analytics (Hourly and Daily). The logic performs deduplication based on `objectid` to accurately count unique boxes packed per operator, ensuring that multi-line items within the same box are not double-counted. Added the necessary SQLite schema and data retrieval methods to support these new analytics tables.

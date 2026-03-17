@@ -1,49 +1,76 @@
 package main
 
 import (
+	"context"
 	"extraction-pipeline/internal/config"
 	"extraction-pipeline/internal/db"
 	"extraction-pipeline/internal/logic"
 	"fmt"
-	"log"
+	"log/slog"
+	"os"
 	"sync"
 	"time"
 )
 
 func main() {
-	fmt.Println("Starting Extraction Pipeline...")
+	// Initialize Structured Logging
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+	slog.SetDefault(logger)
 
-	// 1. Load Configuration
+	slog.Info("starting extraction pipeline...")
+
+	// 1. Create Root Context
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
+	defer cancel()
+
+	// 2. Load Configuration
 	cfg, err := config.LoadConfig()
 	if err != nil {
-		log.Fatalf("Critical error loading config: %v", err)
+		slog.Error("failed to load configuration", "error", err)
+		os.Exit(1)
 	}
 
-	// 2. Initialize SQLite
-	fmt.Println("Initializing SQLite...")
+	// 3. Initialize SQLite
+	slog.Info("initializing SQLite...", "path", cfg.SQLitePath)
 	sqliteClient, err := db.NewSQLiteClient(cfg.SQLitePath)
 	if err != nil {
-		log.Fatalf("Critical error initializing SQLite: %v", err)
+		slog.Error("failed to initialize SQLite", "error", err)
+		os.Exit(1)
 	}
 	defer sqliteClient.Close()
 
-	// 3. Sync Routes
-	fmt.Println("Syncing routes from CSV...")
+	// 4. Sync Routes
 	routeProc := logic.NewRouteProcessor(sqliteClient)
-	if err := routeProc.SyncRoutesFromCSV(cfg.RoutesCSVPath); err != nil {
-		log.Fatalf("Error syncing routes: %v", err)
+	if err := routeProc.SyncRoutesFromCSV(ctx, cfg.RoutesCSVPath); err != nil {
+		slog.Error("error syncing routes", "error", err)
+		os.Exit(1)
 	}
 
-	// 4. Initialize Snowflake
-	fmt.Println("Connecting to Snowflake (this may open a browser window)...")
+	// 5. Initialize Snowflake
+	slog.Info("connecting to Snowflake...")
 	snowflakeClient, err := db.NewSnowflakeClient(cfg.SnowflakeDSN)
 	if err != nil {
-		log.Fatalf("Critical error connecting to Snowflake: %v", err)
+		slog.Error("failed to connect to Snowflake", "error", err)
+		os.Exit(1)
 	}
 	defer snowflakeClient.Close()
 
-	// 5. Run Extractions in Parallel
-	fmt.Println("\nStarting concurrent data extractions...")
+	// 6. Pre-Clear Data (Sequential to avoid SQLite locking issues)
+	today := time.Now().Format("2006-01-02")
+	slog.Info("pre-clearing data for today...", "date", today)
+	if err := sqliteClient.ClearPickingDate(ctx, today); err != nil {
+		slog.Error("failed to clear picking data", "error", err)
+		os.Exit(1)
+	}
+	if err := sqliteClient.ClearPackingDate(ctx, today); err != nil {
+		slog.Error("failed to clear packing data", "error", err)
+		os.Exit(1)
+	}
+
+	// 7. Run Extractions in Parallel
+	slog.Info("starting concurrent data extractions...")
 	var wg sync.WaitGroup
 	errChan := make(chan error, 2)
 
@@ -52,7 +79,7 @@ func main() {
 	go func() {
 		defer wg.Done()
 		proc := logic.NewPickingProcessor(snowflakeClient, sqliteClient, cfg.FloorMap, cfg.OperatorMap)
-		if err := proc.RunPicking(); err != nil {
+		if err := proc.RunPicking(ctx); err != nil {
 			errChan <- fmt.Errorf("picking extraction failed: %w", err)
 		}
 	}()
@@ -61,8 +88,8 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		proc := logic.NewPackingProcessor(snowflakeClient, sqliteClient, cfg.OperatorMap)
-		if err := proc.RunPackingExtraction(); err != nil {
+		proc := logic.NewPackingProcessor(snowflakeClient, sqliteClient, cfg.OperatorMap, cfg.FloorMap)
+		if err := proc.RunPackingExtraction(ctx); err != nil {
 			errChan <- fmt.Errorf("packing extraction failed: %w", err)
 		}
 	}()
@@ -74,27 +101,37 @@ func main() {
 	// Check for errors
 	hasError := false
 	for err := range errChan {
-		fmt.Printf("ERROR: %v\n", err)
+		slog.Error("extraction error occurred", "error", err)
 		hasError = true
 	}
 
 	if hasError {
-		log.Fatal("Pipeline finished with errors.")
+		slog.Error("pipeline finished with errors")
+		os.Exit(1)
 	}
 
-	fmt.Println("\nSuccess! Pipeline initialized, routes synced, and all concurrent extractions completed.")
+	slog.Info("extractions completed successfully")
 
-	// 6. Calculate Productivity
-	fmt.Println("\nTriggering productivity calculations...")
-	today := time.Now().Format("2006-01-02")
+	// 8. Calculate Productivity
 	prodProc := logic.NewProductivityProcessor(sqliteClient, cfg.BreaksConfig)
-	if err := prodProc.CalculateHourlyProductivity(today); err != nil {
-		fmt.Printf("WARNING: Hourly productivity calculation failed: %v\n", err)
+
+	slog.Info("triggering productivity calculations...", "date", today)
+	if err := prodProc.CalculateHourlyProductivity(ctx, today); err != nil {
+		slog.Warn("hourly picking productivity failed", "error", err)
 	}
 
-	if err := prodProc.CalculateDailyProductivity(today); err != nil {
-		fmt.Printf("WARNING: Daily productivity calculation failed: %v\n", err)
+	if err := prodProc.CalculateDailyProductivity(ctx, today); err != nil {
+		slog.Warn("daily picking productivity failed", "error", err)
 	}
 
-	fmt.Println("\nPipeline and Analytics complete.")
+	// Packing Productivity
+	if err := prodProc.CalculateHourlyPackingProductivity(ctx, today); err != nil {
+		slog.Warn("hourly packing productivity failed", "error", err)
+	}
+
+	if err := prodProc.CalculateDailyPackingProductivity(ctx, today); err != nil {
+		slog.Warn("daily packing productivity failed", "error", err)
+	}
+
+	slog.Info("pipeline and analytics complete")
 }

@@ -1,27 +1,29 @@
 package logic
 
 import (
+	"context"
 	"encoding/csv"
 	"fmt"
+	"log/slog"
 	"os"
 )
 
-// RouteProcessor handles logic related to routes
+// RouteProcessor manages the synchronization of route mappings
 type RouteProcessor struct {
-	sqlite interface {
-		UpsertRoutes(routes [][]string) error
+	sqlite RouteRepository
+}
+
+// NewRouteProcessor initializes a new RouteProcessor with injected dependencies
+func NewRouteProcessor(sqlite RouteRepository) *RouteProcessor {
+	return &RouteProcessor{
+		sqlite: sqlite,
 	}
 }
 
-// NewRouteProcessor initializes the route processor
-func NewRouteProcessor(sqlite interface {
-	UpsertRoutes(routes [][]string) error
-}) *RouteProcessor {
-	return &RouteProcessor{sqlite: sqlite}
-}
-
 // SyncRoutesFromCSV reads the CSV file and updates the SQLite database
-func (p *RouteProcessor) SyncRoutesFromCSV(path string) error {
+func (p *RouteProcessor) SyncRoutesFromCSV(ctx context.Context, path string) error {
+	slog.Info("syncing route mappings from CSV...", "path", path)
+
 	file, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("failed to open csv file: %w", err)
@@ -40,11 +42,10 @@ func (p *RouteProcessor) SyncRoutesFromCSV(path string) error {
 		return fmt.Errorf("failed to read csv records: %w", err)
 	}
 
-	err = p.sqlite.UpsertRoutes(records)
-	if err != nil {
+	if err := p.sqlite.UpsertRoutes(ctx, records); err != nil {
 		return fmt.Errorf("failed to upsert routes to database: %w", err)
 	}
 
-	fmt.Printf("Successfully synced %d routes from %s\n", len(records), path)
+	slog.Info("successfully synced routes", "count", len(records), "path", path)
 	return nil
 }
