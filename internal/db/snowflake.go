@@ -48,6 +48,135 @@ type LTAPRecord struct {
 	VOLUM           sql.NullFloat64
 }
 
+// LTAPUnifiedRecord represents joined picking data
+type LTAPUnifiedRecord struct {
+	LTAPRecord
+	ROUTE string
+	LPRIO string
+}
+
+// StreamPickingData fetches picking data joined with route mapping in one go
+func (c *SnowflakeClient) StreamPickingData(date string, recordChan chan<- LTAPUnifiedRecord, errChan chan<- error) {
+	defer close(recordChan)
+
+	// Single query with LEFT JOINs to avoid client-side iteration
+	query := `
+		WITH LTAP AS (
+			SELECT VLPLA, QDATU, NISTA, QNAME, KOBER, QZEIT, NLPLA, VBELN, VLTYP, LGNUM, BRGEW, LGORT, VOLUM
+			FROM PROD_CDH_DB.SDS_MAIN.SDS_CP_LTAP
+			WHERE LGNUM IN ('245', '266')
+			  AND QDATU = ?
+			  AND VBELN IS NOT NULL
+			  AND LGORT = '4000'
+		),
+		ZORF AS (
+			SELECT VBELN, CAST(ROUTE AS VARCHAR) as ROUTE, CAST(LPRIO AS VARCHAR) as LPRIO 
+			FROM PROD_CDH_DB.SDS_MAIN.SDS_CP_ZORF_HU_TO_LINK
+			UNION
+			SELECT VBELN, CAST(ROUTE AS VARCHAR) as ROUTE, CAST(LPRIO AS VARCHAR) as LPRIO 
+			FROM PROD_CDH_DB.SDS_MAIN.SDS_CP_ZORF_HUTO_LNKHIS
+		)
+		SELECT 
+			L.*, 
+			COALESCE(Z.ROUTE, 'NOT-FOUND') as ROUTE, 
+			COALESCE(Z.LPRIO, 'NOT-FOUND') as LPRIO
+		FROM LTAP L
+		LEFT JOIN ZORF Z ON L.VBELN = Z.VBELN
+	`
+	rows, err := c.db.Query(query, date)
+	if err != nil {
+		errChan <- fmt.Errorf("failed to start picking stream: %w", err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var r LTAPUnifiedRecord
+		err := rows.Scan(
+			&r.VLPLA, &r.QDATU, &r.NISTA, &r.QNAME, &r.KOBER, &r.QZEIT, &r.NLPLA,
+			&r.VBELN, &r.VLTYP, &r.LGNUM, &r.BRGEW, &r.LGORT, &r.VOLUM,
+			&r.ROUTE, &r.LPRIO,
+		)
+		if err != nil {
+			errChan <- fmt.Errorf("error scanning picking row: %w", err)
+			return
+		}
+		recordChan <- r
+	}
+}
+
+// CDHDRUnifiedRecord represents joined packing data
+type CDHDRUnifiedRecord struct {
+	CDHDRRecord
+	EXIDV                         string
+	BRGEW, ZLAENG, ZBREIT, ZHOEHE float64
+	VBELN, ROUTE, LPRIO, LGNUM    string
+	ZNEST                         string
+}
+
+// StreamPackingData streams packing headers joined with VEKP and ZORF in one go
+func (c *SnowflakeClient) StreamPackingData(date string, recordChan chan<- CDHDRUnifiedRecord, errChan chan<- error) {
+	defer close(recordChan)
+
+	query := `
+		WITH HEADERS AS (
+			SELECT OBJECTCLAS, OBJECTID, USERNAME, UDATE, UTIME, TCODE
+			FROM PROD_CDH_DB.SDS_MAIN.SDS_CP_CDHDR
+			WHERE OBJECTCLAS = 'HANDL_UNIT'
+			  AND UDATE = ?
+			  AND TCODE = 'ZORF_BOX_CLOSING'
+		),
+		VEKP AS (
+			SELECT VENUM, EXIDV, BRGEW, ZLAENG, ZBREIT, ZHOEHE 
+			FROM PROD_CDH_DB.SDS_MAIN.SDS_CP_VEKP
+		),
+		LINKS AS (
+			SELECT EXIDV, VBELN, CAST(ROUTE AS VARCHAR) as ROUTE, CAST(LPRIO AS VARCHAR) as LPRIO, LGNUM, ZNEST 
+			FROM PROD_CDH_DB.SDS_MAIN.SDS_CP_ZORF_HU_TO_LINK
+			UNION
+			SELECT EXIDV, VBELN, CAST(ROUTE AS VARCHAR) as ROUTE, CAST(LPRIO AS VARCHAR) as LPRIO, LGNUM, ZNEST 
+			FROM PROD_CDH_DB.SDS_MAIN.SDS_CP_ZORF_HUTO_LNKHIS
+		)
+		SELECT 
+			H.OBJECTCLAS, H.OBJECTID, H.USERNAME, H.UDATE, H.UTIME, H.TCODE,
+			V.EXIDV, V.BRGEW, V.ZLAENG, V.ZBREIT, V.ZHOEHE,
+			COALESCE(L.VBELN, 'NOT-FOUND') as VBELN, 
+			COALESCE(L.ROUTE, 'NOT-FOUND') as ROUTE, 
+			COALESCE(L.LPRIO, 'NOT-FOUND') as LPRIO, 
+			COALESCE(L.LGNUM, 'NOT-FOUND') as LGNUM, 
+			COALESCE(L.ZNEST, 'NOT-FOUND') as ZNEST
+		FROM HEADERS H
+		JOIN VEKP V ON H.OBJECTID = V.VENUM
+		LEFT JOIN LINKS L ON V.EXIDV = L.EXIDV
+		WHERE L.LGNUM IN ('245', '266')
+	`
+	rows, err := c.db.Query(query, date)
+	if err != nil {
+		errChan <- fmt.Errorf("failed to start packing stream: %w", err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var r CDHDRUnifiedRecord
+		var brf, zlf, zbf, zhf sql.NullFloat64
+		var vb, rt, lp, lg, zn sql.NullString
+
+		err := rows.Scan(
+			&r.OBJECTCLAS, &r.OBJECTID, &r.USERNAME, &r.UDATE, &r.UTIME, &r.TCODE,
+			&r.EXIDV, &brf, &zlf, &zbf, &zhf,
+			&vb, &rt, &lp, &lg, &zn,
+		)
+		if err != nil {
+			errChan <- fmt.Errorf("error scanning packing row: %w", err)
+			return
+		}
+		r.BRGEW, r.ZLAENG, r.ZBREIT, r.ZHOEHE = brf.Float64, zlf.Float64, zbf.Float64, zhf.Float64
+		r.VBELN, r.ROUTE, r.LPRIO, r.LGNUM, r.ZNEST = vb.String, rt.String, lp.String, lg.String, zn.String
+		recordChan <- r
+	}
+}
+
 // StreamLTAPData fetches picking data and sends it to a channel for concurrent processing
 func (c *SnowflakeClient) StreamLTAPData(date string, recordChan chan<- LTAPRecord, errChan chan<- error) {
 	defer close(recordChan)

@@ -50,8 +50,8 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		proc := logic.NewExtractionProcessor(snowflakeClient, sqliteClient, cfg.FloorMap)
-		if err := proc.RunExtraction(); err != nil {
+		proc := logic.NewPickingProcessor(snowflakeClient, sqliteClient, cfg.FloorMap, cfg.OperatorMap)
+		if err := proc.RunPicking(); err != nil {
 			errChan <- fmt.Errorf("picking extraction failed: %w", err)
 		}
 	}()
@@ -60,7 +60,7 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		proc := logic.NewPackingProcessor(snowflakeClient, sqliteClient)
+		proc := logic.NewPackingProcessor(snowflakeClient, sqliteClient, cfg.OperatorMap)
 		if err := proc.RunPackingExtraction(); err != nil {
 			errChan <- fmt.Errorf("packing extraction failed: %w", err)
 		}

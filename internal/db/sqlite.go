@@ -57,7 +57,8 @@ func (c *SQLiteClient) InitSchema() error {
 			route TEXT,
 			lprio TEXT,
 			flow TEXT,
-			floor TEXT
+			floor TEXT,
+			operator TEXT
 		);`,
 		`CREATE TABLE IF NOT EXISTS raw_packing (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -76,7 +77,8 @@ func (c *SQLiteClient) InitSchema() error {
 			route TEXT,
 			lprio TEXT,
 			lgnum TEXT,
-			znest TEXT
+			znest TEXT,
+			operator TEXT
 		);`,
 	}
 	for _, q := range queries {
@@ -115,7 +117,7 @@ type RawPickingRecord struct {
 	BRGEW           float64
 	LGORT           string
 	VOLUM           float64
-	ROUTE, LPRIO, FLOW, FLOOR string
+	ROUTE, LPRIO, FLOW, FLOOR, OPERATOR string
 }
 
 // InsertRawPicking clears today's data and inserts new records
@@ -134,8 +136,8 @@ func (c *SQLiteClient) InsertRawPicking(date string, records []RawPickingRecord)
 
 	stmt, err := tx.Prepare(`
 		INSERT INTO raw_picking (
-			vlpla, qdatu, nista, qname, kober, qzeit, nlpla, vbeln, vltyp, lgnum, brgew, lgort, volum, route, lprio, flow, floor
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			vlpla, qdatu, nista, qname, kober, qzeit, nlpla, vbeln, vltyp, lgnum, brgew, lgort, volum, route, lprio, flow, floor, operator
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return err
@@ -145,7 +147,7 @@ func (c *SQLiteClient) InsertRawPicking(date string, records []RawPickingRecord)
 	for _, r := range records {
 		_, err = stmt.Exec(
 			r.VLPLA, r.QDATU, r.NISTA, r.QNAME, r.KOBER, r.QZEIT, r.NLPLA, r.VBELN,
-			r.VLTYP, r.LGNUM, r.BRGEW, r.LGORT, r.VOLUM, r.ROUTE, r.LPRIO, r.FLOW, r.FLOOR,
+			r.VLTYP, r.LGNUM, r.BRGEW, r.LGORT, r.VOLUM, r.ROUTE, r.LPRIO, r.FLOW, r.FLOOR, r.OPERATOR,
 		)
 		if err != nil {
 			return err
@@ -160,7 +162,7 @@ type RawPackingRecord struct {
 	OBJECTCLAS, OBJECTID, USERNAME, UDATE, UTIME, TCODE string
 	EXIDV                                               string
 	BRGEW, ZLAENG, ZBREIT, ZHOEHE                       float64
-	VBELN, ROUTE, LPRIO, LGNUM, ZNEST                   string
+	VBELN, ROUTE, LPRIO, LGNUM, ZNEST, OPERATOR           string
 }
 
 // InsertRawPacking clears today's data and inserts new packing records
@@ -181,8 +183,8 @@ func (c *SQLiteClient) InsertRawPacking(date string, records []RawPackingRecord)
 	stmt, err := tx.Prepare(`
 		INSERT INTO raw_packing (
 			objectclas, objectid, username, udate, utime, tcode, exidv, brgew, zlaeng, zbreit, zhoehe, 
-			vbeln, route, lprio, lgnum, znest
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			vbeln, route, lprio, lgnum, znest, operator
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return err
@@ -193,7 +195,7 @@ func (c *SQLiteClient) InsertRawPacking(date string, records []RawPackingRecord)
 		_, err = stmt.Exec(
 			r.OBJECTCLAS, r.OBJECTID, r.USERNAME, r.UDATE, r.UTIME, r.TCODE,
 			r.EXIDV, r.BRGEW, r.ZLAENG, r.ZBREIT, r.ZHOEHE,
-			r.VBELN, r.ROUTE, r.LPRIO, r.LGNUM, r.ZNEST,
+			r.VBELN, r.ROUTE, r.LPRIO, r.LGNUM, r.ZNEST, r.OPERATOR,
 		)
 		if err != nil {
 			return err

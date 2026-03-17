@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.9.1] - 2026-03-17
+### Fixed
+- Snowflake numeric casting bug in unified queries: Added explicit `CAST(LPRIO AS VARCHAR)` to prevent conversion errors during server-side JOINs.
+- Defensive time string slicing in `PickingProcessor`.
+### Added
+- Unified Snowflake streaming with server-side JOINs for both Picking and Packing.
+- Explicit "Wipe-on-Write" policy in SQLite to ensure only latest date data is kept.
+### Changed
+- Renamed `extraction.go` to `picking.go`.
+- Optimized Packing extraction from 3 Snowflake queries per batch to 1 unified JOIN.
+- Reduced memory overhead by streaming directly from Snowflake to SQLite insertion buffers.
+
+## [0.8.1] - 2026-03-17
+### Fixed
+- Operator mapping now handles case-sensitivity and trailing spaces for both Picking and Packing IDs.
+- Added missing `strings` import in `packing.go`.
+
+## [0.8.0] - 2026-03-17
+### Added
+- Operator mapping via `operator_mapping.json`: Maps `QNAME` (Picking) and `USERNAME` (Packing) to real operator names in a new `operator` column.
+### Changed
+- Packing data transformations:
+    - `udate`: Transformed from `YYYYMMDD` to `YYYY-MM-DD`.
+    - `utime`: Transformed from `HHMMSS` to `HH:MM:SS`.
+
 ## [0.7.0] - 2026-03-17
 ### Changed
 - Packing extraction: Added server-side row skipping to only keep records where `LGNUM` is `245` or `266`.

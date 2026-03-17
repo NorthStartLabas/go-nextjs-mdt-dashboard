@@ -13,6 +13,7 @@ type Config struct {
 	SQLitePath    string
 	RoutesCSVPath string
 	FloorMap      map[string]string
+	OperatorMap   map[string]string
 }
 
 // LoadConfig reads configuration from files and environment
@@ -42,10 +43,22 @@ func LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("failed to parse floor mapping: %w", err)
 	}
 
+	// Read operator mapping
+	opMapBytes, err := os.ReadFile("operator_mapping.json")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read operator mapping file: %w", err)
+	}
+
+	var opMap map[string]string
+	if err := json.Unmarshal(opMapBytes, &opMap); err != nil {
+		return nil, fmt.Errorf("failed to parse operator mapping: %w", err)
+	}
+
 	return &Config{
 		SnowflakeDSN: dsn,
 		SQLitePath:    "extraction.db",
 		RoutesCSVPath: "routes.csv",
 		FloorMap:      floorMap,
+		OperatorMap:   opMap,
 	}, nil
 }

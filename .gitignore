@@ -34,3 +34,4 @@ go.work.sum
 routes.csv
 company_root.crt
 snowflake_go_driver_connection_string.txt
+extraction.db
