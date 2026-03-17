@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.11.0] - 2026-03-17
+### Added
+- **Daily Productivity Analytics**:
+    - New `daily_picking_productivity` table for aggregated daily performance.
+    - Automatic aggregation of hourly metrics into daily totals per operator, LGNUM, flow, and floor.
+    - Recalculated daily base productivity and intensity indices for accurate cohort comparison.
+
+## [0.10.1] - 2026-03-17
+### Changed
+- Standardized all productivity metrics to 2 decimal places for cleaner reporting.
+- Applied rounding to weight, volume, intensity indices, and productivity values.
+
+## [0.10.0] - 2026-03-17
+### Added
+- **Advanced Productivity Analytics**:
+    - New `hourly_picking_productivity` table for granular operational insights.
+    - Context-aware time splitting: Automatically adjusts effective hours when operators switch LGNUM, Flow, or Floor within the same hour.
+    - Integrated Break Logic via `breaks_config.json`: Allows LGNUM-specific break deductions.
+    - **Intensity Multipliers**: Peer-reviewed multipliers for Weight and Item counts compared to cohort averages.
+    - Adjusted Productivity calculation using combined intensity indices.
+    - Automatic volume conversion from `ccm` to `m3`.
+
 ## [0.9.1] - 2026-03-17
 ### Fixed
 - Snowflake numeric casting bug in unified queries: Added explicit `CAST(LPRIO AS VARCHAR)` to prevent conversion errors during server-side JOINs.
@@ -94,4 +116,4 @@
 - Logic, Execution, and Configuration separation.
 
 ### Follow-up
-Optimized the pipeline for performance by implementing parallel execution for Picking and Packing extractions. Cleaned up the packing schema by removing non-existent Snowflake fields (`VASSAP`, `VASNOSAP`). The system now leverages Go's concurrency to minimize total execution time.
+Implemented `CalculateDailyProductivity` to aggregate hourly metrics into a new `daily_picking_productivity` table. This allows for high-level performance tracking without losing the granular intensity context, as indices are recalculated against the daily cohort averages. This ensures that the "Daily Productivity" is not just a sum of averages, but a statistically sound daily metric.

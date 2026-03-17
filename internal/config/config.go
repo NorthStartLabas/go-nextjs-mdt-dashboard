@@ -14,6 +14,7 @@ type Config struct {
 	RoutesCSVPath string
 	FloorMap      map[string]string
 	OperatorMap   map[string]string
+	BreaksConfig  map[string]map[string]float64 // LGNUM -> Hour -> BreakDuration
 }
 
 // LoadConfig reads configuration from files and environment
@@ -26,11 +27,6 @@ func LoadConfig() (*Config, error) {
 
 	dsn := strings.TrimSpace(string(dsnBytes))
 	dsn = strings.Trim(dsn, "\"")
-	// The driver expects "account/user?auth..." or a full URL.
-	// The provided string looks like: "BUTERL2@MEDTRONIC.COM@MDTPLC-AWSUSE1P1/PROD_CDH_DB/SDS_MAIN?warehouse=PROD_ANALYTICS_WH&authenticator=externalbrowser"
-	// We might need to prefix with snowflake:// if the driver requires it, or handle it as is.
-    // gosnowflake usually accepts: <user>:<password>@<account>/<database>/<schema>?warehouse=<warehouse>
-    // The user's string is a bit different but looks like a valid Snowflake DSN for externalbrowser.
 
 	// Read floor mapping
 	floorMapBytes, err := os.ReadFile("floor_mapping.json")
@@ -54,11 +50,23 @@ func LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("failed to parse operator mapping: %w", err)
 	}
 
+	// Read breaks configuration
+	breaksBytes, err := os.ReadFile("breaks_config.json")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read breaks config file: %w", err)
+	}
+
+	var breaksConfig map[string]map[string]float64
+	if err := json.Unmarshal(breaksBytes, &breaksConfig); err != nil {
+		return nil, fmt.Errorf("failed to parse breaks config: %w", err)
+	}
+
 	return &Config{
 		SnowflakeDSN: dsn,
 		SQLitePath:    "extraction.db",
 		RoutesCSVPath: "routes.csv",
 		FloorMap:      floorMap,
 		OperatorMap:   opMap,
+		BreaksConfig:  breaksConfig,
 	}, nil
 }

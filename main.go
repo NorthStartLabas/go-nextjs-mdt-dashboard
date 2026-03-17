@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 )
 
 func main() {
@@ -82,4 +83,18 @@ func main() {
 	}
 
 	fmt.Println("\nSuccess! Pipeline initialized, routes synced, and all concurrent extractions completed.")
+
+	// 6. Calculate Productivity
+	fmt.Println("\nTriggering productivity calculations...")
+	today := time.Now().Format("2006-01-02")
+	prodProc := logic.NewProductivityProcessor(sqliteClient, cfg.BreaksConfig)
+	if err := prodProc.CalculateHourlyProductivity(today); err != nil {
+		fmt.Printf("WARNING: Hourly productivity calculation failed: %v\n", err)
+	}
+
+	if err := prodProc.CalculateDailyProductivity(today); err != nil {
+		fmt.Printf("WARNING: Daily productivity calculation failed: %v\n", err)
+	}
+
+	fmt.Println("\nPipeline and Analytics complete.")
 }

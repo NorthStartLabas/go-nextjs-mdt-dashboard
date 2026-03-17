@@ -80,6 +80,41 @@ func (c *SQLiteClient) InitSchema() error {
 			znest TEXT,
 			operator TEXT
 		);`,
+		`CREATE TABLE IF NOT EXISTS hourly_picking_productivity (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			date TEXT,
+			lgnum TEXT,
+			flow TEXT,
+			floor TEXT,
+			hour TEXT,
+			operator TEXT,
+			line_count INTEGER,
+			item_quantity REAL,
+			total_weight REAL,
+			total_volume_m3 REAL,
+			effective_hours REAL,
+			base_productivity REAL,
+			weight_intensity REAL,
+			item_intensity REAL,
+			adjusted_productivity REAL
+		);`,
+		`CREATE TABLE IF NOT EXISTS daily_picking_productivity (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			date TEXT,
+			lgnum TEXT,
+			flow TEXT,
+			floor TEXT,
+			operator TEXT,
+			line_count INTEGER,
+			item_quantity REAL,
+			total_weight REAL,
+			total_volume_m3 REAL,
+			total_hours REAL,
+			base_productivity REAL,
+			weight_intensity REAL,
+			item_intensity REAL,
+			adjusted_productivity REAL
+		);`,
 	}
 	for _, q := range queries {
 		_, err := c.db.Exec(q)
@@ -107,6 +142,31 @@ func (c *SQLiteClient) GetFlowMap() (map[string]string, error) {
 		flowMap[route] = flow
 	}
 	return flowMap, nil
+}
+
+// GetRawPickingRecords returns all picking records for a specific date
+func (c *SQLiteClient) GetRawPickingRecords(date string) ([]RawPickingRecord, error) {
+	rows, err := c.db.Query(`
+		SELECT vlpla, qdatu, nista, qname, kober, qzeit, nlpla, vbeln, vltyp, lgnum, brgew, lgort, volum, route, lprio, flow, floor, operator
+		FROM raw_picking WHERE qdatu = ?`, date)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch raw picking: %w", err)
+	}
+	defer rows.Close()
+
+	var records []RawPickingRecord
+	for rows.Next() {
+		var r RawPickingRecord
+		err := rows.Scan(
+			&r.VLPLA, &r.QDATU, &r.NISTA, &r.QNAME, &r.KOBER, &r.QZEIT, &r.NLPLA, &r.VBELN,
+			&r.VLTYP, &r.LGNUM, &r.BRGEW, &r.LGORT, &r.VOLUM, &r.ROUTE, &r.LPRIO, &r.FLOW, &r.FLOOR, &r.OPERATOR,
+		)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, r)
+	}
+	return records, nil
 }
 
 // RawPickingRecord matches the schema for bulk insertion
@@ -238,3 +298,130 @@ func (c *SQLiteClient) UpsertRoutes(routes [][]string) error {
 
 	return tx.Commit()
 }
+
+// HourlyProductivityRecord represents the calculated productivity data
+type HourlyProductivityRecord struct {
+	Date, LGNUM, Flow, Floor, Hour, Operator string
+	LineCount                                int
+	ItemQuantity, TotalWeight, TotalVolumeM3 float64
+	EffectiveHours, BaseProductivity         float64
+	WeightIntensity, ItemIntensity           float64
+	AdjustedProductivity                     float64
+}
+
+// InsertProductivity clears and inserts new productivity records for a date
+func (c *SQLiteClient) InsertProductivity(date string, records []HourlyProductivityRecord) error {
+	tx, err := c.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec("DELETE FROM hourly_picking_productivity WHERE date = ?", date)
+	if err != nil {
+		return fmt.Errorf("failed to clear old productivity: %w", err)
+	}
+
+	stmt, err := tx.Prepare(`
+		INSERT INTO hourly_picking_productivity (
+			date, lgnum, flow, floor, hour, operator, line_count, item_quantity, 
+			total_weight, total_volume_m3, effective_hours, base_productivity,
+			weight_intensity, item_intensity, adjusted_productivity
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, r := range records {
+		_, err = stmt.Exec(
+			r.Date, r.LGNUM, r.Flow, r.Floor, r.Hour, r.Operator, r.LineCount, r.ItemQuantity,
+			r.TotalWeight, r.TotalVolumeM3, r.EffectiveHours, r.BaseProductivity,
+			r.WeightIntensity, r.ItemIntensity, r.AdjustedProductivity,
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+// DailyProductivityRecord represents the aggregated daily productivity data
+type DailyProductivityRecord struct {
+	Date, LGNUM, Flow, Floor, Operator string
+	LineCount                          int
+	ItemQuantity, TotalWeight, TotalVolumeM3 float64
+	TotalHours, BaseProductivity        float64
+	WeightIntensity, ItemIntensity      float64
+	AdjustedProductivity                float64
+}
+
+// InsertDailyProductivity clears and inserts new daily productivity records for a date
+func (c *SQLiteClient) InsertDailyProductivity(date string, records []DailyProductivityRecord) error {
+	tx, err := c.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec("DELETE FROM daily_picking_productivity WHERE date = ?", date)
+	if err != nil {
+		return fmt.Errorf("failed to clear old daily productivity: %w", err)
+	}
+
+	stmt, err := tx.Prepare(`
+		INSERT INTO daily_picking_productivity (
+			date, lgnum, flow, floor, operator, line_count, item_quantity, 
+			total_weight, total_volume_m3, total_hours, base_productivity,
+			weight_intensity, item_intensity, adjusted_productivity
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, r := range records {
+		_, err = stmt.Exec(
+			r.Date, r.LGNUM, r.Flow, r.Floor, r.Operator, r.LineCount, r.ItemQuantity,
+			r.TotalWeight, r.TotalVolumeM3, r.TotalHours, r.BaseProductivity,
+			r.WeightIntensity, r.ItemIntensity, r.AdjustedProductivity,
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+// GetHourlyProductivityRecords returns all hourly records for a specific date
+func (c *SQLiteClient) GetHourlyProductivityRecords(date string) ([]HourlyProductivityRecord, error) {
+	rows, err := c.db.Query(`
+		SELECT date, lgnum, flow, floor, hour, operator, line_count, item_quantity, 
+		       total_weight, total_volume_m3, effective_hours, base_productivity,
+		       weight_intensity, item_intensity, adjusted_productivity
+		FROM hourly_picking_productivity WHERE date = ?`, date)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch hourly productivity: %w", err)
+	}
+	defer rows.Close()
+
+	var records []HourlyProductivityRecord
+	for rows.Next() {
+		var r HourlyProductivityRecord
+		err := rows.Scan(
+			&r.Date, &r.LGNUM, &r.Flow, &r.Floor, &r.Hour, &r.Operator, &r.LineCount, &r.ItemQuantity,
+			&r.TotalWeight, &r.TotalVolumeM3, &r.EffectiveHours, &r.BaseProductivity,
+			&r.WeightIntensity, &r.ItemIntensity, &r.AdjustedProductivity,
+		)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, r)
+	}
+	return records, nil
+}
+
