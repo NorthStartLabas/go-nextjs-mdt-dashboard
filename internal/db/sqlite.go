@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -165,6 +167,19 @@ func (c *SQLiteClient) InitSchema() error {
 		`CREATE INDEX IF NOT EXISTS idx_daily_picking_date ON daily_picking_productivity(date);`,
 		`CREATE INDEX IF NOT EXISTS idx_hourly_packing_date ON hourly_packing_productivity(date);`,
 		`CREATE INDEX IF NOT EXISTS idx_daily_packing_date ON daily_packing_productivity(date);`,
+		`CREATE TABLE IF NOT EXISTS pipeline_runs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			queued_at TEXT NOT NULL,
+			started_at TEXT,
+			finished_at TEXT,
+			status TEXT NOT NULL,
+			error_message TEXT,
+			duration_seconds INTEGER,
+			records_picking INTEGER,
+			records_packing INTEGER
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_pipeline_runs_queued_at ON pipeline_runs(queued_at);`,
+		`CREATE INDEX IF NOT EXISTS idx_pipeline_runs_status ON pipeline_runs(status);`,
 	}
 	for _, q := range queries {
 		if _, err := c.db.Exec(q); err != nil {
@@ -220,13 +235,13 @@ func (c *SQLiteClient) GetRawPickingRecords(ctx context.Context, date string) ([
 
 // RawPickingRecord matches the schema for bulk insertion
 type RawPickingRecord struct {
-	VLPLA, QDATU   string
-	NISTA           float64
+	VLPLA, QDATU                                    string
+	NISTA                                           float64
 	QNAME, KOBER, QZEIT, NLPLA, VBELN, VLTYP, LGNUM string
-	BRGEW           float64
-	LGORT           string
-	VOLUM           float64
-	ROUTE, LPRIO, FLOW, FLOOR, OPERATOR string
+	BRGEW                                           float64
+	LGORT                                           string
+	VOLUM                                           float64
+	ROUTE, LPRIO, FLOW, FLOOR, OPERATOR             string
 }
 
 // InsertRawPicking clears today's data and inserts new records
@@ -268,10 +283,10 @@ func (c *SQLiteClient) InsertRawPicking(ctx context.Context, date string, record
 
 // RawPackingRecord matches the SQLite schema for packing data
 type RawPackingRecord struct {
-	OBJECTCLAS, OBJECTID, USERNAME, UDATE, UTIME, TCODE string
-	EXIDV                                               string
-	BRGEW, ZLAENG, ZBREIT, ZHOEHE                       float64
-	VBELN, ROUTE, LPRIO, LGNUM, ZNEST, FLOW, FLOOR, OPERATOR           string
+	OBJECTCLAS, OBJECTID, USERNAME, UDATE, UTIME, TCODE      string
+	EXIDV                                                    string
+	BRGEW, ZLAENG, ZBREIT, ZHOEHE                            float64
+	VBELN, ROUTE, LPRIO, LGNUM, ZNEST, FLOW, FLOOR, OPERATOR string
 }
 
 // InsertRawPacking clears today's data and inserts new packing records
@@ -282,7 +297,7 @@ func (c *SQLiteClient) InsertRawPacking(ctx context.Context, date string, record
 	}
 	defer tx.Rollback()
 
-	// Handle both YYYY-MM-DD and YYYYMMDD if necessary, 
+	// Handle both YYYY-MM-DD and YYYYMMDD if necessary,
 	// but extraction date is standardized to YYYY-MM-DD
 	_, err = tx.ExecContext(ctx, "DELETE FROM raw_packing WHERE udate = ?", date)
 	if err != nil {
@@ -338,7 +353,6 @@ func (c *SQLiteClient) GetRawPackingRecords(ctx context.Context, date string) ([
 	}
 	return records, nil
 }
-
 
 // UpsertRoutes clears the routes table and inserts new data
 func (c *SQLiteClient) UpsertRoutes(ctx context.Context, routes [][]string) error {
@@ -425,12 +439,12 @@ func (c *SQLiteClient) InsertProductivity(ctx context.Context, date string, reco
 
 // DailyProductivityRecord represents the aggregated daily productivity data
 type DailyProductivityRecord struct {
-	Date, LGNUM, Flow, Floor, Operator string
-	LineCount                          int
+	Date, LGNUM, Flow, Floor, Operator       string
+	LineCount                                int
 	ItemQuantity, TotalWeight, TotalVolumeM3 float64
-	TotalHours, BaseProductivity        float64
-	WeightIntensity, ItemIntensity      float64
-	AdjustedProductivity                float64
+	TotalHours, BaseProductivity             float64
+	WeightIntensity, ItemIntensity           float64
+	AdjustedProductivity                     float64
 }
 
 // InsertDailyProductivity clears and inserts new daily productivity records for a date
@@ -503,9 +517,9 @@ func (c *SQLiteClient) GetHourlyProductivityRecords(ctx context.Context, date st
 // HourlyPackingRecord represents the hourly packing box counts
 type HourlyPackingRecord struct {
 	Date, LGNUM, Hour, Operator, Flow, Floor string
-	BoxCount                                  int
-	EffectiveHours                            float64
-	Productivity                              float64
+	BoxCount                                 int
+	EffectiveHours                           float64
+	Productivity                             float64
 }
 
 // InsertPackingProductivity clears and inserts new hourly packing productivity
@@ -542,8 +556,8 @@ func (c *SQLiteClient) InsertPackingProductivity(ctx context.Context, date strin
 // DailyPackingRecord represents daily packing box counts
 type DailyPackingRecord struct {
 	Date, LGNUM, Operator, Flow, Floor string
-	BoxCount                            int
-	Productivity                        float64
+	BoxCount                           int
+	Productivity                       float64
 }
 
 // InsertDailyPackingProductivity clears and inserts new daily packing productivity
@@ -603,8 +617,8 @@ func (c *SQLiteClient) GetHourlyPackingProductivityRecords(ctx context.Context, 
 
 // PickingAggRow matches the grouping requirements for picking
 type PickingAggRow struct {
-	LGNUM, Flow, Floor, Hour, Operator string
-	LineCount                          int
+	LGNUM, Flow, Floor, Hour, Operator       string
+	LineCount                                int
 	ItemQuantity, TotalWeight, TotalVolumeM3 float64
 }
 
@@ -633,7 +647,7 @@ func (c *SQLiteClient) GetHourlyPickingAggregation(ctx context.Context, date str
 	for rows.Next() {
 		var r PickingAggRow
 		if err := rows.Scan(
-			&r.LGNUM, &r.Flow, &r.Floor, &r.Hour, &r.Operator, 
+			&r.LGNUM, &r.Flow, &r.Floor, &r.Hour, &r.Operator,
 			&r.LineCount, &r.ItemQuantity, &r.TotalWeight, &r.TotalVolumeM3,
 		); err != nil {
 			return nil, err
@@ -758,4 +772,290 @@ func (c *SQLiteClient) BatchInsertPacking(ctx context.Context, records []RawPack
 		}
 	}
 	return tx.Commit()
+}
+
+// PipelineRun captures lifecycle information for each orchestrator execution.
+type PipelineRun struct {
+	ID              int64
+	QueuedAt        time.Time
+	StartedAt       *time.Time
+	FinishedAt      *time.Time
+	Status          string
+	ErrorMessage    string
+	DurationSeconds *int64
+	RecordsPicking  *int64
+	RecordsPacking  *int64
+}
+
+// PipelineRunStats aggregates historical performance metrics for pipeline runs.
+type PipelineRunStats struct {
+	SuccessCount           int64
+	FailureCount           int64
+	AverageSuccessDuration *float64
+	AverageFailureDuration *float64
+}
+
+const pipelineTimeLayout = time.RFC3339Nano
+
+// FailStalePipelineRuns marks in-flight or queued runs as failed (e.g., after API restart).
+func (c *SQLiteClient) FailStalePipelineRuns(ctx context.Context, now time.Time) error {
+	_, err := c.db.ExecContext(ctx,
+		`UPDATE pipeline_runs SET status = 'failed', finished_at = ?, error_message = 'server restart while run active'
+		 WHERE status IN ('running', 'queued')`,
+		now.UTC().Format(pipelineTimeLayout),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to mark stale runs as failed: %w", err)
+	}
+	return nil
+}
+
+// InsertPipelineRun records a newly queued pipeline run and returns its database ID.
+func (c *SQLiteClient) InsertPipelineRun(ctx context.Context, queuedAt time.Time) (int64, error) {
+	res, err := c.db.ExecContext(ctx,
+		`INSERT INTO pipeline_runs (queued_at, status) VALUES (?, 'queued')`,
+		queuedAt.UTC().Format(pipelineTimeLayout),
+	)
+	if err != nil {
+		return 0, fmt.Errorf("failed to insert pipeline run: %w", err)
+	}
+	return res.LastInsertId()
+}
+
+// MarkPipelineRunStarted updates the status and start time when a job begins execution.
+func (c *SQLiteClient) MarkPipelineRunStarted(ctx context.Context, id int64, startedAt time.Time) error {
+	_, err := c.db.ExecContext(ctx,
+		`UPDATE pipeline_runs SET started_at = ?, status = 'running' WHERE id = ?`,
+		startedAt.UTC().Format(pipelineTimeLayout), id,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to mark pipeline run %d started: %w", id, err)
+	}
+	return nil
+}
+
+// CompletePipelineRun finalizes a run with its terminal status and optional metrics.
+func (c *SQLiteClient) CompletePipelineRun(
+	ctx context.Context,
+	id int64,
+	finishedAt time.Time,
+	status string,
+	durationSeconds *int64,
+	errorMessage *string,
+	recordsPicking *int64,
+	recordsPacking *int64,
+) error {
+	if status != "success" && status != "failed" {
+		return fmt.Errorf("unsupported pipeline run status: %s", status)
+	}
+	_, err := c.db.ExecContext(ctx,
+		`UPDATE pipeline_runs
+		 SET finished_at = ?, status = ?, duration_seconds = ?, error_message = ?,
+		     records_picking = ?, records_packing = ?
+		 WHERE id = ?`,
+		finishedAt.UTC().Format(pipelineTimeLayout),
+		status,
+		nullableInt(durationSeconds),
+		nullableString(errorMessage),
+		nullableInt(recordsPicking),
+		nullableInt(recordsPacking),
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to complete pipeline run %d: %w", id, err)
+	}
+	return nil
+}
+
+// ListPipelineRunsSince fetches recent runs ordered by newest first.
+func (c *SQLiteClient) ListPipelineRunsSince(ctx context.Context, since time.Time, limit int) ([]PipelineRun, error) {
+	rows, err := c.db.QueryContext(ctx,
+		`SELECT id, queued_at, started_at, finished_at, status, error_message,
+		        duration_seconds, records_picking, records_packing
+		 FROM pipeline_runs
+		 WHERE queued_at >= ?
+		 ORDER BY queued_at DESC
+		 LIMIT ?`,
+		since.UTC().Format(pipelineTimeLayout), limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pipeline runs: %w", err)
+	}
+	defer rows.Close()
+
+	var runs []PipelineRun
+	for rows.Next() {
+		run, err := scanPipelineRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, run)
+	}
+	return runs, nil
+}
+
+// ListQueuedPipelineRuns returns the currently queued jobs ordered FIFO.
+func (c *SQLiteClient) ListQueuedPipelineRuns(ctx context.Context) ([]PipelineRun, error) {
+	rows, err := c.db.QueryContext(ctx,
+		`SELECT id, queued_at, started_at, finished_at, status, error_message,
+		        duration_seconds, records_picking, records_packing
+		 FROM pipeline_runs
+		 WHERE status = 'queued'
+		 ORDER BY queued_at ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list queued pipeline runs: %w", err)
+	}
+	defer rows.Close()
+
+	var runs []PipelineRun
+	for rows.Next() {
+		run, err := scanPipelineRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, run)
+	}
+	return runs, nil
+}
+
+// GetPipelineRun fetches a single run by identifier.
+func (c *SQLiteClient) GetPipelineRun(ctx context.Context, id int64) (PipelineRun, error) {
+	row := c.db.QueryRowContext(ctx,
+		`SELECT id, queued_at, started_at, finished_at, status, error_message,
+		        duration_seconds, records_picking, records_packing
+		 FROM pipeline_runs
+		 WHERE id = ?`, id,
+	)
+	run, err := scanPipelineRun(row)
+	if err != nil {
+		return PipelineRun{}, err
+	}
+	return run, nil
+}
+
+// GetActivePipelineRun returns the currently running job, if any.
+func (c *SQLiteClient) GetActivePipelineRun(ctx context.Context) (*PipelineRun, error) {
+	row := c.db.QueryRowContext(ctx,
+		`SELECT id, queued_at, started_at, finished_at, status, error_message,
+		        duration_seconds, records_picking, records_packing
+		 FROM pipeline_runs
+		 WHERE status = 'running'
+		 ORDER BY started_at DESC
+		 LIMIT 1`)
+	run, err := scanPipelineRun(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &run, nil
+}
+
+// GetPipelineRunStats aggregates success/failure counts and duration averages since a timestamp.
+func (c *SQLiteClient) GetPipelineRunStats(ctx context.Context, since time.Time) (PipelineRunStats, error) {
+	row := c.db.QueryRowContext(ctx,
+		`SELECT
+			SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS success_count,
+			SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failure_count,
+			AVG(CASE WHEN status = 'success' THEN duration_seconds END) AS avg_success,
+			AVG(CASE WHEN status = 'failed' THEN duration_seconds END) AS avg_failure
+		 FROM pipeline_runs
+		 WHERE queued_at >= ?`,
+		since.UTC().Format(pipelineTimeLayout),
+	)
+	var (
+		successCount sql.NullInt64
+		failureCount sql.NullInt64
+		avgSuccess   sql.NullFloat64
+		avgFailure   sql.NullFloat64
+	)
+	if err := row.Scan(&successCount, &failureCount, &avgSuccess, &avgFailure); err != nil {
+		return PipelineRunStats{}, fmt.Errorf("failed to compute pipeline run stats: %w", err)
+	}
+	stats := PipelineRunStats{
+		SuccessCount: successCount.Int64,
+		FailureCount: failureCount.Int64,
+	}
+	if avgSuccess.Valid {
+		stats.AverageSuccessDuration = &avgSuccess.Float64
+	}
+	if avgFailure.Valid {
+		stats.AverageFailureDuration = &avgFailure.Float64
+	}
+	return stats, nil
+}
+
+func nullableInt(value *int64) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func nullableString(value *string) any {
+	if value == nil || *value == "" {
+		return nil
+	}
+	return *value
+}
+
+func parseNullableTime(value sql.NullString) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value.String)
+	if err != nil {
+		return nil
+	}
+	return &parsed
+}
+
+func nullableInt64(value sql.NullInt64) *int64 {
+	if !value.Valid {
+		return nil
+	}
+	val := value.Int64
+	return &val
+}
+
+// Ping verifies the SQLite connection is still alive.
+func (c *SQLiteClient) Ping(ctx context.Context) error {
+	return c.db.PingContext(ctx)
+}
+
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanPipelineRun(scanner rowScanner) (PipelineRun, error) {
+	var (
+		id            int64
+		queuedAtStr   string
+		startedAtStr  sql.NullString
+		finishedAtStr sql.NullString
+		status        string
+		errorMsg      sql.NullString
+		duration      sql.NullInt64
+		recPicking    sql.NullInt64
+		recPacking    sql.NullInt64
+	)
+	if err := scanner.Scan(&id, &queuedAtStr, &startedAtStr, &finishedAtStr, &status, &errorMsg, &duration, &recPicking, &recPacking); err != nil {
+		return PipelineRun{}, err
+	}
+	queuedAt, err := time.Parse(time.RFC3339Nano, queuedAtStr)
+	if err != nil {
+		return PipelineRun{}, fmt.Errorf("failed to parse queued_at for run %d: %w", id, err)
+	}
+	return PipelineRun{
+		ID:              id,
+		QueuedAt:        queuedAt,
+		StartedAt:       parseNullableTime(startedAtStr),
+		FinishedAt:      parseNullableTime(finishedAtStr),
+		Status:          status,
+		ErrorMessage:    errorMsg.String,
+		DurationSeconds: nullableInt64(duration),
+		RecordsPicking:  nullableInt64(recPicking),
+		RecordsPacking:  nullableInt64(recPacking),
+	}, nil
 }
