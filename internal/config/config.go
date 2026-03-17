@@ -22,6 +22,7 @@ func LoadConfig() (*Config, error) {
 	}
 
 	dsn := strings.TrimSpace(string(dsnBytes))
+	dsn = strings.Trim(dsn, "\"")
 	// The driver expects "account/user?auth..." or a full URL.
 	// The provided string looks like: "BUTERL2@MEDTRONIC.COM@MDTPLC-AWSUSE1P1/PROD_CDH_DB/SDS_MAIN?warehouse=PROD_ANALYTICS_WH&authenticator=externalbrowser"
 	// We might need to prefix with snowflake:// if the driver requires it, or handle it as is.

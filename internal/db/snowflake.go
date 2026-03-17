@@ -35,9 +35,9 @@ func (c *SnowflakeClient) Close() error {
 // TestQuery runs a simple query to confirm access to tables
 func (c *SnowflakeClient) TestQuery() error {
 	tables := []string{
-		"PROD_CDH.SDS_MAIN.SDS_CP_LTAP",
-		"PROD_CDH.SDS_MAIN.SDS_CP_ZORF_HU_TO_LINK",
-		"PROD_CDH.SDS_MAIN.SDS_CP_ZORF_HUTO_LNKHIS",
+		"PROD_CDH_DB.SDS_MAIN.SDS_CP_LTAP",
+		"PROD_CDH_DB.SDS_MAIN.SDS_CP_ZORF_HU_TO_LINK",
+		"PROD_CDH_DB.SDS_MAIN.SDS_CP_ZORF_HUTO_LNKHIS",
 	}
 
 	for _, table := range tables {

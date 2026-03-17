@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.1.1] - 2026-03-17
+### Fixed
+- Connection string parsing logic to handle surrounding double quotes.
+
 ## [0.1.0] - 2026-03-17
 ### Added
 - Initial project structure for Snowflake to SQLite extraction pipeline.
@@ -9,4 +13,4 @@
 - Logic, Execution, and Configuration separation.
 
 ### Follow-up
-Initialized the foundational architecture. Built decoupled modules for Snowflake (gosnowflake) and SQLite (modernc-org/sqlite). Implemented a robust route synchronization logic that ensures the local DB stays updated with `routes.csv`. Ready for Snowflake-to-SQLite data extraction.
+Resolved a "failed to parse authenticator" issue by correctly trimming double quotes from the `snowflake_go_driver_connection_string.txt` file. Connection verification is now ready to proceed.
