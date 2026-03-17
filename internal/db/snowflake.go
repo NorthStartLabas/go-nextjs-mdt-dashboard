@@ -131,6 +131,136 @@ func (c *SnowflakeClient) FetchRouteData(vbelns []string) (map[string]RouteRecor
 	return routeMap, nil
 }
 
+// CDHDRRecord represents packing activity from SDS_CP_CDHDR
+type CDHDRRecord struct {
+	OBJECTCLAS, OBJECTID, USERNAME, UDATE, UTIME, TCODE string
+}
+
+// StreamCDHDRData streams packing headers for a specific date (format YYYYMMDD)
+func (c *SnowflakeClient) StreamCDHDRData(date string, recordChan chan<- CDHDRRecord, errChan chan<- error) {
+	defer close(recordChan)
+
+	query := `
+		SELECT OBJECTCLAS, OBJECTID, USERNAME, UDATE, UTIME, TCODE
+		FROM PROD_CDH_DB.SDS_MAIN.SDS_CP_CDHDR
+		WHERE OBJECTCLAS = 'HANDL_UNIT'
+		  AND UDATE = ?
+		  AND TCODE = 'ZORF_BOX_CLOSING'
+	`
+	rows, err := c.db.Query(query, date)
+	if err != nil {
+		errChan <- fmt.Errorf("failed to start CDHDR stream: %w", err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var r CDHDRRecord
+		if err := rows.Scan(&r.OBJECTCLAS, &r.OBJECTID, &r.USERNAME, &r.UDATE, &r.UTIME, &r.TCODE); err != nil {
+			errChan <- fmt.Errorf("error scanning CDHDR row: %w", err)
+			return
+		}
+		recordChan <- r
+	}
+}
+
+// VEKPRecord represents HU metadata from SDS_CP_VEKP
+type VEKPRecord struct {
+	VENUM, EXIDV                  string
+	BRGEW, ZLAENG, ZBREIT, ZHOEHE sql.NullFloat64
+}
+
+// FetchVEKPData fetches metadata for a list of internal HU IDs (VENUM)
+func (c *SnowflakeClient) FetchVEKPData(venums []string) (map[string]VEKPRecord, error) {
+	if len(venums) == 0 {
+		return make(map[string]VEKPRecord), nil
+	}
+
+	inClause := ""
+	for i := range venums {
+		inClause += "?"
+		if i < len(venums)-1 {
+			inClause += ","
+		}
+	}
+
+	query := fmt.Sprintf(`
+		SELECT VENUM, EXIDV, BRGEW, ZLAENG, ZBREIT, ZHOEHE
+		FROM PROD_CDH_DB.SDS_MAIN.SDS_CP_VEKP
+		WHERE VENUM IN (%s)
+	`, inClause)
+
+	args := make([]interface{}, len(venums))
+	for i, v := range venums {
+		args[i] = v
+	}
+
+	rows, err := c.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch VEKP data: %w", err)
+	}
+	defer rows.Close()
+
+	vekpMap := make(map[string]VEKPRecord)
+	for rows.Next() {
+		var r VEKPRecord
+		if err := rows.Scan(&r.VENUM, &r.EXIDV, &r.BRGEW, &r.ZLAENG, &r.ZBREIT, &r.ZHOEHE); err != nil {
+			return nil, err
+		}
+		vekpMap[r.VENUM] = r
+	}
+	return vekpMap, nil
+}
+
+// PackingLinkRecord represents distribution details from ZORF tables
+type PackingLinkRecord struct {
+	EXIDV, VBELN, ROUTE, LPRIO, LGNUM sql.NullString
+	ZNEST                             sql.NullString
+}
+
+// FetchPackingLinkData fetches delivery/route links for a list of EXIDVs
+func (c *SnowflakeClient) FetchPackingLinkData(exidvs []string) (map[string]PackingLinkRecord, error) {
+	if len(exidvs) == 0 {
+		return make(map[string]PackingLinkRecord), nil
+	}
+
+	inClause := ""
+	for i := range exidvs {
+		inClause += "?"
+		if i < len(exidvs)-1 {
+			inClause += ","
+		}
+	}
+
+	query := fmt.Sprintf(`
+		SELECT EXIDV, VBELN, ROUTE, LPRIO, LGNUM, ZNEST FROM PROD_CDH_DB.SDS_MAIN.SDS_CP_ZORF_HU_TO_LINK WHERE EXIDV IN (%s)
+		UNION
+		SELECT EXIDV, VBELN, ROUTE, LPRIO, LGNUM, ZNEST FROM PROD_CDH_DB.SDS_MAIN.SDS_CP_ZORF_HUTO_LNKHIS WHERE EXIDV IN (%s)
+	`, inClause, inClause)
+
+	args := make([]interface{}, len(exidvs))
+	for i, v := range exidvs {
+		args[i] = v
+	}
+	fullArgs := append(args, args...)
+
+	rows, err := c.db.Query(query, fullArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch packing link data: %w", err)
+	}
+	defer rows.Close()
+
+	linkMap := make(map[string]PackingLinkRecord)
+	for rows.Next() {
+		var r PackingLinkRecord
+		if err := rows.Scan(&r.EXIDV, &r.VBELN, &r.ROUTE, &r.LPRIO, &r.LGNUM, &r.ZNEST); err != nil {
+			return nil, err
+		}
+		linkMap[r.EXIDV.String] = r
+	}
+	return linkMap, nil
+}
+
 // TestQuery runs a simple query to confirm access to tables
 func (c *SnowflakeClient) TestQuery() error {
 	tables := []string{

@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.7.0] - 2026-03-17
+### Changed
+- Packing extraction: Added server-side row skipping to only keep records where `LGNUM` is `245` or `266`.
+- Packing extraction: Added guard clauses to skip records without VEKP or Link metadata.
+
+## [0.6.1] - 2026-03-17
+### Fixed
+- Robust NULL handling for packing data (VEKP dimensions and ZORF links).
+- Fixed "converting NULL to string" error in `ZNEST` and other nullable columns.
+
+## [0.6.0] - 2026-03-17
+### Added
+- Concurrent extraction execution: Picking and Packing now run in parallel using goroutines and `sync.WaitGroup`.
+- Error aggregation for parallel tasks.
+### Removed
+- `VASSAP` and `VASNOSAP` columns from `raw_packing` as they are not present in Snowflake source.
+
+## [0.5.0] - 2026-03-17
+### Added
+- Packing extraction pipeline:
+    - Queries `SDS_CP_CDHDR` for `ZORF_BOX_CLOSING` activity.
+    - Joins with `SDS_CP_VEKP` to fetch HU dimensions and external IDs.
+    - Joins with `ZORF` tables to link HUs to deliveries and routes.
+- New `raw_packing` table in SQLite with 18 consolidated columns.
+- Support for streaming `CDHDR` headers for packing extraction.
+
 ## [0.4.1] - 2026-03-17
 ### Fixed
 - Missing `strings` package import in `extraction.go` causing compilation errors.
@@ -43,4 +69,4 @@
 - Logic, Execution, and Configuration separation.
 
 ### Follow-up
-Fixed a compilation error by adding the missing `strings` import. The system is now fully functional with the new floor mapping and data transformation features.
+Optimized the pipeline for performance by implementing parallel execution for Picking and Packing extractions. Cleaned up the packing schema by removing non-existent Snowflake fields (`VASSAP`, `VASNOSAP`). The system now leverages Go's concurrency to minimize total execution time.

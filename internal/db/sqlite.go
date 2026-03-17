@@ -59,6 +59,25 @@ func (c *SQLiteClient) InitSchema() error {
 			flow TEXT,
 			floor TEXT
 		);`,
+		`CREATE TABLE IF NOT EXISTS raw_packing (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			objectclas TEXT,
+			objectid TEXT,
+			username TEXT,
+			udate TEXT,
+			utime TEXT,
+			tcode TEXT,
+			exidv TEXT,
+			brgew REAL,
+			zlaeng REAL,
+			zbreit REAL,
+			zhoehe REAL,
+			vbeln TEXT,
+			route TEXT,
+			lprio TEXT,
+			lgnum TEXT,
+			znest TEXT
+		);`,
 	}
 	for _, q := range queries {
 		_, err := c.db.Exec(q)
@@ -127,6 +146,54 @@ func (c *SQLiteClient) InsertRawPicking(date string, records []RawPickingRecord)
 		_, err = stmt.Exec(
 			r.VLPLA, r.QDATU, r.NISTA, r.QNAME, r.KOBER, r.QZEIT, r.NLPLA, r.VBELN,
 			r.VLTYP, r.LGNUM, r.BRGEW, r.LGORT, r.VOLUM, r.ROUTE, r.LPRIO, r.FLOW, r.FLOOR,
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+// RawPackingRecord matches the SQLite schema for packing data
+type RawPackingRecord struct {
+	OBJECTCLAS, OBJECTID, USERNAME, UDATE, UTIME, TCODE string
+	EXIDV                                               string
+	BRGEW, ZLAENG, ZBREIT, ZHOEHE                       float64
+	VBELN, ROUTE, LPRIO, LGNUM, ZNEST                   string
+}
+
+// InsertRawPacking clears today's data and inserts new packing records
+func (c *SQLiteClient) InsertRawPacking(date string, records []RawPackingRecord) error {
+	tx, err := c.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Handle both YYYY-MM-DD and YYYYMMDD if necessary, 
+	// but extraction date is standardized to YYYY-MM-DD
+	_, err = tx.Exec("DELETE FROM raw_packing WHERE udate = ?", date)
+	if err != nil {
+		return fmt.Errorf("failed to clear old packing data for %s: %w", date, err)
+	}
+
+	stmt, err := tx.Prepare(`
+		INSERT INTO raw_packing (
+			objectclas, objectid, username, udate, utime, tcode, exidv, brgew, zlaeng, zbreit, zhoehe, 
+			vbeln, route, lprio, lgnum, znest
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, r := range records {
+		_, err = stmt.Exec(
+			r.OBJECTCLAS, r.OBJECTID, r.USERNAME, r.UDATE, r.UTIME, r.TCODE,
+			r.EXIDV, r.BRGEW, r.ZLAENG, r.ZBREIT, r.ZHOEHE,
+			r.VBELN, r.ROUTE, r.LPRIO, r.LGNUM, r.ZNEST,
 		)
 		if err != nil {
 			return err

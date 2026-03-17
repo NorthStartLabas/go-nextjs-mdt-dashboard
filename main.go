@@ -6,6 +6,7 @@ import (
 	"extraction-pipeline/internal/logic"
 	"fmt"
 	"log"
+	"sync"
 )
 
 func main() {
@@ -40,12 +41,45 @@ func main() {
 	}
 	defer snowflakeClient.Close()
 
-	// 5. Run Extraction
-	fmt.Println("\nStarting data extraction...")
-	extractionProc := logic.NewExtractionProcessor(snowflakeClient, sqliteClient, cfg.FloorMap)
-	if err := extractionProc.RunExtraction(); err != nil {
-		log.Fatalf("Critical error during extraction: %v", err)
+	// 5. Run Extractions in Parallel
+	fmt.Println("\nStarting concurrent data extractions...")
+	var wg sync.WaitGroup
+	errChan := make(chan error, 2)
+
+	// Picking Extraction
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		proc := logic.NewExtractionProcessor(snowflakeClient, sqliteClient, cfg.FloorMap)
+		if err := proc.RunExtraction(); err != nil {
+			errChan <- fmt.Errorf("picking extraction failed: %w", err)
+		}
+	}()
+
+	// Packing Extraction
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		proc := logic.NewPackingProcessor(snowflakeClient, sqliteClient)
+		if err := proc.RunPackingExtraction(); err != nil {
+			errChan <- fmt.Errorf("packing extraction failed: %w", err)
+		}
+	}()
+
+	// Wait for completion
+	wg.Wait()
+	close(errChan)
+
+	// Check for errors
+	hasError := false
+	for err := range errChan {
+		fmt.Printf("ERROR: %v\n", err)
+		hasError = true
 	}
 
-	fmt.Println("\nSuccess! Pipeline initialized, routes synced, and data extraction completed.")
+	if hasError {
+		log.Fatal("Pipeline finished with errors.")
+	}
+
+	fmt.Println("\nSuccess! Pipeline initialized, routes synced, and all concurrent extractions completed.")
 }
