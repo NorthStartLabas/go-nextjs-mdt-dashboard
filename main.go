@@ -32,7 +32,7 @@ func main() {
 		log.Fatalf("Error syncing routes: %v", err)
 	}
 
-	// 4. Initialize Snowflake and Test
+	// 4. Initialize Snowflake
 	fmt.Println("Connecting to Snowflake (this may open a browser window)...")
 	snowflakeClient, err := db.NewSnowflakeClient(cfg.SnowflakeDSN)
 	if err != nil {
@@ -40,10 +40,12 @@ func main() {
 	}
 	defer snowflakeClient.Close()
 
-	fmt.Println("Running Snowflake table tests...")
-	if err := snowflakeClient.TestQuery(); err != nil {
-		log.Fatalf("Error testing Snowflake tables: %v", err)
+	// 5. Run Extraction
+	fmt.Println("\nStarting data extraction...")
+	extractionProc := logic.NewExtractionProcessor(snowflakeClient, sqliteClient)
+	if err := extractionProc.RunExtraction(); err != nil {
+		log.Fatalf("Critical error during extraction: %v", err)
 	}
 
-	fmt.Println("\nSuccess! Pipeline initialized, routes synced, and Snowflake connection verified.")
+	fmt.Println("\nSuccess! Pipeline initialized, routes synced, and data extraction completed.")
 }
