@@ -56,7 +56,8 @@ func (c *SQLiteClient) InitSchema() error {
 			volum REAL,
 			route TEXT,
 			lprio TEXT,
-			flow TEXT
+			flow TEXT,
+			floor TEXT
 		);`,
 	}
 	for _, q := range queries {
@@ -95,7 +96,7 @@ type RawPickingRecord struct {
 	BRGEW           float64
 	LGORT           string
 	VOLUM           float64
-	ROUTE, LPRIO, FLOW string
+	ROUTE, LPRIO, FLOW, FLOOR string
 }
 
 // InsertRawPicking clears today's data and inserts new records
@@ -114,8 +115,8 @@ func (c *SQLiteClient) InsertRawPicking(date string, records []RawPickingRecord)
 
 	stmt, err := tx.Prepare(`
 		INSERT INTO raw_picking (
-			vlpla, qdatu, nista, qname, kober, qzeit, nlpla, vbeln, vltyp, lgnum, brgew, lgort, volum, route, lprio, flow
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			vlpla, qdatu, nista, qname, kober, qzeit, nlpla, vbeln, vltyp, lgnum, brgew, lgort, volum, route, lprio, flow, floor
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return err
@@ -125,7 +126,7 @@ func (c *SQLiteClient) InsertRawPicking(date string, records []RawPickingRecord)
 	for _, r := range records {
 		_, err = stmt.Exec(
 			r.VLPLA, r.QDATU, r.NISTA, r.QNAME, r.KOBER, r.QZEIT, r.NLPLA, r.VBELN,
-			r.VLTYP, r.LGNUM, r.BRGEW, r.LGORT, r.VOLUM, r.ROUTE, r.LPRIO, r.FLOW,
+			r.VLTYP, r.LGNUM, r.BRGEW, r.LGORT, r.VOLUM, r.ROUTE, r.LPRIO, r.FLOW, r.FLOOR,
 		)
 		if err != nil {
 			return err

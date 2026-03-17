@@ -3,6 +3,7 @@ package logic
 import (
 	"extraction-pipeline/internal/db"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -10,13 +11,15 @@ import (
 type ExtractionProcessor struct {
 	snowflake *db.SnowflakeClient
 	sqlite    *db.SQLiteClient
+	floorMap  map[string]string
 }
 
 // NewExtractionProcessor initializes the processor
-func NewExtractionProcessor(snowflake *db.SnowflakeClient, sqlite *db.SQLiteClient) *ExtractionProcessor {
+func NewExtractionProcessor(snowflake *db.SnowflakeClient, sqlite *db.SQLiteClient, floorMap map[string]string) *ExtractionProcessor {
 	return &ExtractionProcessor{
 		snowflake: snowflake,
 		sqlite:    sqlite,
+		floorMap:  floorMap,
 	}
 }
 
@@ -78,21 +81,45 @@ func (p *ExtractionProcessor) RunExtraction() error {
 	fmt.Print("Mapping and saving records to SQLite...")
 	var finalRecords []db.RawPickingRecord
 	for _, ltap := range ltapRecords {
+		// 1. Transform Date (2026-03-17T00:00:00Z -> 2026-03-17)
+		qdatu := ltap.QDATU
+		if len(qdatu) >= 10 {
+			qdatu = qdatu[:10]
+		}
+
+		// 2. Transform Time (2026-03-17T08:22:58Z -> 08:22:58)
+		qzeit := ltap.QZEIT
+		if strings.Contains(qzeit, "T") {
+			parts := strings.Split(qzeit, "T")
+			if len(parts) > 1 {
+				qzeit = strings.TrimSuffix(parts[1], "Z")
+			}
+		}
+
 		record := db.RawPickingRecord{
-			VLPLA: ltap.VLPLA, QDATU: ltap.QDATU, NISTA: ltap.NISTA,
-			QNAME: ltap.QNAME, QZEIT: ltap.QZEIT, VBELN: ltap.VBELN,
+			VLPLA: ltap.VLPLA, QDATU: qdatu, NISTA: ltap.NISTA,
+			QNAME: ltap.QNAME, QZEIT: qzeit, VBELN: ltap.VBELN,
 			LGNUM: ltap.LGNUM, LGORT: ltap.LGORT,
 		}
 
-		// Handle Nullable fields
+		// 3. Map Floor from VLTYP
+		if ltap.VLTYP.Valid {
+			record.VLTYP = ltap.VLTYP.String
+			if floorName, ok := p.floorMap[record.VLTYP]; ok {
+				record.FLOOR = floorName
+			} else {
+				record.FLOOR = "UNKNOWN-TYPE"
+			}
+		} else {
+			record.FLOOR = "NA"
+		}
+
+		// Handle other Nullable fields
 		if ltap.KOBER.Valid {
 			record.KOBER = ltap.KOBER.String
 		}
 		if ltap.NLPLA.Valid {
 			record.NLPLA = ltap.NLPLA.String
-		}
-		if ltap.VLTYP.Valid {
-			record.VLTYP = ltap.VLTYP.String
 		}
 		if ltap.BRGEW.Valid {
 			record.BRGEW = ltap.BRGEW.Float64
@@ -101,10 +128,14 @@ func (p *ExtractionProcessor) RunExtraction() error {
 			record.VOLUM = ltap.VOLUM.Float64
 		}
 
+		// 4. Map Route and Flow (Override Y2-flow -> A-flow)
 		if routeInfo, ok := routeRecords[ltap.VBELN]; ok {
 			record.ROUTE = routeInfo.ROUTE
 			record.LPRIO = routeInfo.LPRIO
 			if flow, ok := flowMap[routeInfo.ROUTE]; ok {
+				if flow == "Y2-flow" {
+					flow = "A-flow"
+				}
 				record.FLOW = flow
 			} else {
 				record.FLOW = "UNKNOWN-ROUTE"

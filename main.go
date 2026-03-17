@@ -42,7 +42,7 @@ func main() {
 
 	// 5. Run Extraction
 	fmt.Println("\nStarting data extraction...")
-	extractionProc := logic.NewExtractionProcessor(snowflakeClient, sqliteClient)
+	extractionProc := logic.NewExtractionProcessor(snowflakeClient, sqliteClient, cfg.FloorMap)
 	if err := extractionProc.RunExtraction(); err != nil {
 		log.Fatalf("Critical error during extraction: %v", err)
 	}

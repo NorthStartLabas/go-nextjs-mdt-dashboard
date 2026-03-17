@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.1] - 2026-03-17
+### Fixed
+- Missing `strings` package import in `extraction.go` causing compilation errors.
+
+## [0.4.0] - 2026-03-17
+### Added
+- Floor mapping configuration (`floor_mapping.json`) to map `VLTYP` to human-readable floor names.
+- New `floor` column in `raw_picking` table.
+### Changed
+- Date/Time transformations:
+    - `qdatu`: Truncated to `YYYY-MM-DD`.
+    - `qzeit`: Extracted time portion `HH:MM:SS`.
+- Flow logic override: Automatically converts 'Y2-flow' to 'A-flow'.
+
 ## [0.3.0] - 2026-03-17
 ### Added
 - Concurrent data streaming from Snowflake using Go channels and goroutines.
@@ -29,4 +43,4 @@
 - Logic, Execution, and Configuration separation.
 
 ### Follow-up
-Upgraded the pipeline to support concurrent data streaming and robust NULL handling. Removed initial connection tests to streamline the workflow. The system now safely handles nullable Snowflake fields while processing data in parallel.
+Fixed a compilation error by adding the missing `strings` import. The system is now fully functional with the new floor mapping and data transformation features.
